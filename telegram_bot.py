@@ -1,10 +1,16 @@
 import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
 import yt_dlp
 from dotenv import load_dotenv
 
-load_dotenv()
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -14,48 +20,114 @@ from telegram.ext import (
     filters
 )
 
-# Apna CURRENT NEW token yahan paste karo
+
+# =========================
+# ENVIRONMENT
+# =========================
+
+load_dotenv()
+
 TOKEN = os.getenv("BOT_TOKEN")
+
+if not TOKEN:
+    raise ValueError("BOT_TOKEN environment variable is missing")
+
+
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+
+# =========================
+# RENDER HEALTH SERVER
+# =========================
+
+class HealthHandler(BaseHTTPRequestHandler):
+
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running!")
+
+    def log_message(self, format, *args):
+        pass
+
+
+def run_health_server():
+
+    port = int(os.environ.get("PORT", 10000))
+
+    server = HTTPServer(
+        ("0.0.0.0", port),
+        HealthHandler
+    )
+
+    print(f"Health server running on port {port}")
+
+    server.serve_forever()
+
+
+threading.Thread(
+    target=run_health_server,
+    daemon=True
+).start()
 
 
 # =========================
 # START
 # =========================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
     await update.message.reply_text(
         "👋 YouTube Downloader Ready!\n\n"
         "🔗 Pehle YouTube video ka link bhejo."
     )
 
-#python -c "import requests; t='8965075110:AAF2BzpBIinAAEibWXNH3hrbwWBEIVkoLYc'; r=requests.get(f'https://api.telegram.org/bot{t}/getMe',timeout=10); print(r.text)"
+
 # =========================
 # RECEIVE YOUTUBE LINK
 # =========================
 
-async def receive_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def receive_link(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     url = update.message.text.strip()
 
     if "youtube.com" not in url and "youtu.be" not in url:
+
         await update.message.reply_text(
             "❌ Please valid YouTube link bhejo."
         )
+
         return
 
-    # URL save karna
     context.user_data["youtube_url"] = url
 
     keyboard = [
         [
-            InlineKeyboardButton("360p", callback_data="360"),
-            InlineKeyboardButton("480p", callback_data="480"),
+            InlineKeyboardButton(
+                "360p",
+                callback_data="360"
+            ),
+            InlineKeyboardButton(
+                "480p",
+                callback_data="480"
+            )
         ],
         [
-            InlineKeyboardButton("720p", callback_data="720"),
-            InlineKeyboardButton("1080p", callback_data="1080"),
+            InlineKeyboardButton(
+                "720p",
+                callback_data="720"
+            ),
+            InlineKeyboardButton(
+                "1080p",
+                callback_data="1080"
+            )
         ],
         [
             InlineKeyboardButton(
@@ -65,7 +137,9 @@ async def receive_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     ]
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = InlineKeyboardMarkup(
+        keyboard
+    )
 
     await update.message.reply_text(
         "🎬 Quality select karo:",
@@ -83,18 +157,22 @@ async def quality_selected(
 ):
 
     query = update.callback_query
+
     await query.answer()
 
     quality = query.data
 
-    # Saved URL
-    url = context.user_data.get("youtube_url")
+    url = context.user_data.get(
+        "youtube_url"
+    )
 
     if not url:
+
         await query.edit_message_text(
             "❌ YouTube link nahi mila.\n"
             "Please dobara link bhejo."
         )
+
         return
 
     await query.edit_message_text(
@@ -102,20 +180,32 @@ async def quality_selected(
         f"⏳ Downloading... Please wait."
     )
 
+
     # =========================
     # QUALITY FORMAT
     # =========================
 
     if quality == "best":
-        format_code = "bestvideo+bestaudio/best"
 
-    else:
         format_code = (
-            f"bestvideo[height<={quality}]"
-            f"+bestaudio/best[height<={quality}]"
+            "bestvideo+bestaudio/best"
         )
 
+    else:
+
+        format_code = (
+            f"bestvideo[height<={quality}]"
+            f"+bestaudio/"
+            f"best[height<={quality}]"
+        )
+
+
+    # =========================
+    # YT-DLP OPTIONS
+    # =========================
+
     options = {
+
         "format": format_code,
 
         "outtmpl": os.path.join(
@@ -127,8 +217,9 @@ async def quality_selected(
 
         "noplaylist": True,
 
-        "quiet": False,
+        "quiet": False
     }
+
 
     try:
 
@@ -136,17 +227,29 @@ async def quality_selected(
         # DOWNLOAD
         # =========================
 
-        with yt_dlp.YoutubeDL(options) as ydl:
+        with yt_dlp.YoutubeDL(
+            options
+        ) as ydl:
 
             info = ydl.extract_info(
                 url,
                 download=True
             )
 
-            filename = ydl.prepare_filename(info)
+            filename = ydl.prepare_filename(
+                info
+            )
 
-        # FFmpeg merge ke baad MP4
-        filename = os.path.splitext(filename)[0] + ".mp4"
+
+        # =========================
+        # MP4 FILE
+        # =========================
+
+        filename = (
+            os.path.splitext(filename)[0]
+            + ".mp4"
+        )
+
 
         # =========================
         # CHECK FILE
@@ -161,60 +264,93 @@ async def quality_selected(
 
             return
 
+
         # =========================
         # FILE SIZE
         # =========================
 
-        file_size = os.path.getsize(filename)
+        file_size = os.path.getsize(
+            filename
+        )
 
-        file_size_mb = file_size / (1024 * 1024)
+        file_size_mb = (
+            file_size / (1024 * 1024)
+        )
+
 
         await query.message.reply_text(
+
             f"✅ Download complete!\n\n"
             f"🎬 Quality: {quality}\n"
             f"📦 Size: {file_size_mb:.1f} MB\n\n"
             f"📤 Sending video..."
         )
 
+
         # =========================
-        # SEND VIDEO AS DOCUMENT
+        # SEND FILE
         # =========================
 
-        with open(filename, "rb") as video:
+        with open(
+            filename,
+            "rb"
+        ) as video:
 
             await query.message.reply_document(
+
                 document=video,
+
                 read_timeout=600,
+
                 write_timeout=600,
+
                 connect_timeout=60
             )
+
 
         await query.message.reply_text(
             "✅ Video successfully sent!"
         )
+
 
         # =========================
         # DELETE FILE
         # =========================
 
         try:
+
             os.remove(filename)
+
         except Exception:
+
             pass
 
-        # URL clear
+
+        # =========================
+        # CLEAR URL
+        # =========================
+
         context.user_data.pop(
             "youtube_url",
             None
         )
 
+
     except Exception as e:
 
-        print("\n========== ERROR ==========")
+        print(
+            "\n========== ERROR =========="
+        )
+
         print(e)
-        print("===========================\n")
+
+        print(
+            "===========================\n"
+        )
+
 
         await query.message.reply_text(
+
             f"❌ Download/Send failed:\n\n"
             f"{str(e)[:1500]}"
         )
@@ -224,10 +360,18 @@ async def quality_selected(
 # BOT SETUP
 # =========================
 
-app = Application.builder().token(TOKEN).build()
+app = (
+    Application
+    .builder()
+    .token(TOKEN)
+    .build()
+)
 
 
-# /start
+# =========================
+# HANDLERS
+# =========================
+
 app.add_handler(
     CommandHandler(
         "start",
@@ -236,7 +380,6 @@ app.add_handler(
 )
 
 
-# YouTube link
 app.add_handler(
     MessageHandler(
         filters.TEXT & ~filters.COMMAND,
@@ -245,7 +388,6 @@ app.add_handler(
 )
 
 
-# Quality button
 app.add_handler(
     CallbackQueryHandler(
         quality_selected
@@ -253,7 +395,10 @@ app.add_handler(
 )
 
 
-print("Bot is running...")
+# =========================
+# RUN BOT
+# =========================
 
+print("Bot is running...")
 
 app.run_polling()
